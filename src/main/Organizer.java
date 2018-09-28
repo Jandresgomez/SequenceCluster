@@ -99,11 +99,16 @@ public class Organizer {
 		closeReport();
 		
 	}
+	
+	public void distributionReport() throws Exception {
+		openReport(RP);
+		createTable();
+		sample();
+	}
+	
+	
 	public static void main(String[] args) throws Exception {
 		Organizer organizer = new Organizer(args[0], args[1]);
-		organizer.openReport(RP);
-		organizer.createTable();
-		organizer.sample();
 	}
 }
  
