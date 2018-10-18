@@ -27,10 +27,11 @@ public class ClusterTableManager {
 	private static int PREFIX = 10;
 	private static String FILE_TYPE = ".fastq.gz";
 	private static final boolean TEST_RUN = false;
-	private static final int TABLE_SIZE = 2000000;
+	private static final int TABLE_SIZE = 2500000;
 	private static final SequenceComparator SC = new SequenceComparator();
 	
 	private int newIndex = 0;
+	private int kmerCount = 0;
 	private int[][] table;
 	private HashMap<DNAShortKmer, Integer> index;
 	private HashMap<DNAShortKmer, ArrayList<DNAShortKmer>> cluster;
@@ -41,10 +42,14 @@ public class ClusterTableManager {
 		if(TEST_RUN) cluster = new HashMap<>(size/2);
 	}
 	
+	/**
+	 * Agrega el kmer por parametro al primer cluster a distancia de Hamming 1 o menos y registra sus datos en el consenso.
+	 * Si el kmer no se relaciona con ningun cluster, crea un nuevo cluster cuyo consenso se compone unicamente de este kmer.
+	 * @param kmer el kmer a agregar
+	 */
 	public void add(DNAShortKmer kmer) {
 		boolean hit = false;
 		for(int i = 0; i < kmer.length() && !hit; i++) {
-			
 			for(int j = 0; j < ALPH.length && !hit; j++) {
 				Integer k = index.get(new DNAShortKmer(kmer.subSequence(0, i) + "" + ALPH[j] + kmer.subSequence(i+1, kmer.length())));
 				if(k != null) {
@@ -59,6 +64,11 @@ public class ClusterTableManager {
 		}
 	}
 	
+	/**
+	 * Genera un nuevo cluster cuyo unico miembro es el kmer por parametro.
+	 * Reserva el espacio para el consenso e ingresa los datos del kmer.
+	 * @param kmer representante del nuevo cluster
+	 */
 	public void newCluster(DNAShortKmer kmer) {
 		for(int i = 0; i < kmer.length(); i++) {
 			char bp = Character.toUpperCase(kmer.charAt(i));
@@ -77,6 +87,11 @@ public class ClusterTableManager {
 		}
 	}
 	
+	/**
+	 * Obtiene el kmer representativo del cluster cuyo concenso esta en la posicion k de la tabla de consensos
+	 * @param k posicion en la tabla de consensos del cluster a evaluar
+	 * @return
+	 */
 	public DNAShortKmer getRepresentative(int k) {
 		char[] consensus = new char[KMER_LENGTH];
 		
@@ -94,6 +109,11 @@ public class ClusterTableManager {
 		return new DNAShortKmer(new String(consensus));
 	}
 	
+	/**
+	 * Agrega la informacion del kmer al consenso del cluster que se encuentra en la posicion k de la tabla
+	 * @param kmer el kmer a agregar al consenso
+	 * @param k posicion en la tabla de consensos del cluster
+	 */
 	public void append(DNAShortKmer kmer, int k) {
 		DNAShortKmer oldKmer = getRepresentative(k);
 		
@@ -121,6 +141,9 @@ public class ClusterTableManager {
 		}
 	}
 	
+	/**
+	 * Cuenta la cantidad de miembros por cluster e imprime todo al log del programa 
+	 */
 	public void logClusterCount() {
 		Set<DNAShortKmer> keys = index.keySet();
 		
@@ -142,6 +165,10 @@ public class ClusterTableManager {
 		}
 	}
 	
+	/**
+	 * Imprime todos los miembros del cluster junto con su representativo (identificado por el prefijo #) al log del programa.
+	 * Requiere que el programa corra en modo TEST_RUN
+	 */
 	public void logClustersMembers() {
 		if(!TEST_RUN) {
 			System.err.println("Clusters members can only be logged on a test run."); return;
@@ -165,9 +192,12 @@ public class ClusterTableManager {
 		}
 	}
 	
-	public void process(String fileName) {
-		int count = 0;
-		try (FastqFileReader openFile = new FastqFileReader(fileName);) {
+	/**
+	 * Procesa todas las lecturas de un archivo fastq. Para cada lectura llama el metodo {@link #add(DNAShortKmer)}
+	 * @param f archivo fastq para procesar
+	 */
+	public void process(File f) {
+		try (FastqFileReader openFile = new FastqFileReader(f);) {
 			Iterator<RawRead> reader = openFile.iterator();
 			while(reader.hasNext()) {
 				RawRead read = reader.next();
@@ -175,19 +205,22 @@ public class ClusterTableManager {
 				//System.out.println(s);
 				if(!s.contains("N")) {
 					add(new DNAShortKmer(s.substring(PREFIX,PREFIX + KMER_LENGTH)));
-					if((++count)%20000 == 0) {
-						System.out.println("Processed " + (count) + " kmers");
-						consistenceCheck();
-					}
+					kmerCount++;
 				}
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
 		
-		System.out.println("Processed a total of " + count + " kmers");
+		System.out.println("\nProcessed a total of " + kmerCount + " kmers");
+		consistenceCheck();
 	}
 	
+	/**
+	 * Revisa que no exista un concenso inconsistente.
+	 * Un consenso inconsistente se considera como un consenso donde no todas las posiciones tienen la misma cantidad
+	 * de votos.
+	 */
 	public void consistenceCheck() {
 		for(int i = 0; i*KMER_LENGTH < table[0].length ; i++) {
 			int count = 0;
@@ -202,6 +235,18 @@ public class ClusterTableManager {
 		System.out.println("OKAY");
 	}
 	
+	public void processDir(String path) {
+		File[] files = (new File(path)).listFiles();
+		for(File f : files) {
+			if(f.getName().endsWith(FILE_TYPE)) process(f);
+			System.out.println("Done with " + f.getName());
+		}
+	}
+	
+	/**
+	 * Imprime las frecuencias de las distancias promedio para cada uno de los clusters de la tabla al log del programa.
+	 * Requiere que el programa corra en modo TEST_RUN
+	 */
 	public void logDistancesInsideClustersDistr() {
 		if(!TEST_RUN) {
 			System.err.println("Cluster distances from the inside can only be logged on a test run."); return;
@@ -246,8 +291,11 @@ public class ClusterTableManager {
 		}
 	}
 	
+	/**
+	 * Imprime la frecuencia de la cantidad de elementos dentro de cada cluster al log del programa.
+	 */
 	public void logClusterCountDistr() {
-		int[] freq = new int[100000];
+		int[] freq = new int[1000000];
 		Set<DNAShortKmer> keys = index.keySet();
 		
 		try (PrintWriter log = new PrintWriter(new FileWriter(new File(outFolder + LOG), true))) {
@@ -275,16 +323,12 @@ public class ClusterTableManager {
 	}
 	
 	public static void main(String[] args) {
+		long t = System.currentTimeMillis();
 		ClusterTableManager cluster = new ClusterTableManager(TABLE_SIZE);
-		cluster.process(args[0]);
-		cluster.process(args[2]);
+		cluster.processDir(args[0]);
+		System.out.println(System.currentTimeMillis() - t);
 		outFolder = args[1];
-		try {
-			Thread.sleep(30000);
-		} catch (InterruptedException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
+		
 		cluster.logClusterCount();
 		//cluster.logClustersMembers();
 		cluster.logClusterCountDistr();
