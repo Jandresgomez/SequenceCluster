@@ -6,10 +6,13 @@ import java.io.PrintWriter;
 import java.lang.reflect.Array;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Set;
+
+import javax.sound.midi.Sequence;
 
 import ngsep.sequences.DNASequence;
 import ngsep.sequences.DNAShortKmer;
@@ -21,7 +24,11 @@ public class ClusterTableManager {
 	private static final String LOG = "/" + (new SimpleDateFormat("dd_HHmmss").format(new Date())) + "_" + "log.txt";
 	private static String outFolder = "";
 	private static int KMER_LENGTH = 31;
-	private static final boolean TEST_RUN = true;
+	private static int PREFIX = 10;
+	private static String FILE_TYPE = ".fastq.gz";
+	private static final boolean TEST_RUN = false;
+	private static final int TABLE_SIZE = 2000000;
+	private static final SequenceComparator SC = new SequenceComparator();
 	
 	private int newIndex = 0;
 	private int[][] table;
@@ -116,6 +123,7 @@ public class ClusterTableManager {
 	
 	public void logClusterCount() {
 		Set<DNAShortKmer> keys = index.keySet();
+		
 		try (PrintWriter log = new PrintWriter(new FileWriter(new File(outFolder + LOG), true))) {
 			log.println("== START CLUSTER COUNT ==\n\n");
 			for(DNAShortKmer kmer : keys) {
@@ -126,9 +134,9 @@ public class ClusterTableManager {
 				}
 				
 				log.println(kmer + " == " + count);
-				log.flush();
 			}
 			log.println("\n\n== END CLUSTER COUNT ==\n\n");
+			log.flush();
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -151,6 +159,7 @@ public class ClusterTableManager {
 			}
 			
 			log.println("\n\n== END CLUSTER MEMBERS ==\n\n");
+			log.flush();
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -165,8 +174,8 @@ public class ClusterTableManager {
 				String s = read.getSequenceString();
 				//System.out.println(s);
 				if(!s.contains("N")) {
-					add(new DNAShortKmer(s.substring(10,10 + KMER_LENGTH)));
-					if((++count)%5000 == 0) {
+					add(new DNAShortKmer(s.substring(PREFIX,PREFIX + KMER_LENGTH)));
+					if((++count)%20000 == 0) {
 						System.out.println("Processed " + (count) + " kmers");
 						consistenceCheck();
 					}
@@ -193,11 +202,92 @@ public class ClusterTableManager {
 		System.out.println("OKAY");
 	}
 	
+	public void logDistancesInsideClustersDistr() {
+		if(!TEST_RUN) {
+			System.err.println("Cluster distances from the inside can only be logged on a test run."); return;
+		}
+		
+		int[] freq = new int[KMER_LENGTH];
+		
+		try (PrintWriter log = new PrintWriter(new FileWriter(new File(outFolder + LOG), true))) {
+			log.println("== START CLUSTER INSIDE DISTANCES ==\n\n");
+			
+			Set<DNAShortKmer> keys = cluster.keySet();
+			for(DNAShortKmer kmer : keys) {
+				int distance = 0;
+				int count = 0;
+				ArrayList<DNAShortKmer> members = cluster.get(kmer);
+				for(int i = 0; i < members.size(); i++) {
+					DNAShortKmer s1 = members.get(i);
+					for(int j = i + 1; j < members.size(); j++) {
+						DNAShortKmer s2 = members.get(j);
+						distance += SC.compare(s1, s2);
+						count++;
+					}
+				}
+				
+				try {
+					int remainder = distance/count;
+					freq[remainder]++;
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+			
+			log.println("Distance,Frequence");
+			for(int i = 0; i < freq.length; i++) {
+				log.println(i + "," + freq[i]);
+			}
+			
+			log.println("\n\n== END CLUSTER INSIDE DISTANCES ==\n\n");
+			log.flush();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+	
+	public void logClusterCountDistr() {
+		int[] freq = new int[100000];
+		Set<DNAShortKmer> keys = index.keySet();
+		
+		try (PrintWriter log = new PrintWriter(new FileWriter(new File(outFolder + LOG), true))) {
+			log.println("== START CLUSTER COUNT ==\n\n");
+			for(DNAShortKmer kmer : keys) {
+				int k = index.get(kmer);
+				int count = 0;
+				for(int i = 0; i < ALPH.length; i++) {
+					count += table[i][k*KMER_LENGTH];
+				}
+				
+				freq[count]++;
+			}
+			
+			log.println("Distance,Frequence");
+			for(int i = 0; i < freq.length; i++) {
+				log.println(i + "," + freq[i]);
+			}
+			
+			log.println("\n\n== END CLUSTER COUNT ==\n\n");
+			log.flush();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+	
 	public static void main(String[] args) {
-		ClusterTableManager cluster = new ClusterTableManager(1000000);
+		ClusterTableManager cluster = new ClusterTableManager(TABLE_SIZE);
 		cluster.process(args[0]);
+		cluster.process(args[2]);
 		outFolder = args[1];
+		try {
+			Thread.sleep(30000);
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 		cluster.logClusterCount();
-		cluster.logClustersMembers();
+		//cluster.logClustersMembers();
+		cluster.logClusterCountDistr();
+		//cluster.logDistancesInsideClustersDistr();
 	}
 }
