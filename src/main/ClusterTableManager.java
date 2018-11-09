@@ -1,7 +1,10 @@
 package main;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
+import java.io.OutputStream;
+import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Array;
 import java.text.SimpleDateFormat;
@@ -14,6 +17,7 @@ import java.util.Set;
 
 import javax.sound.midi.Sequence;
 
+import ngsep.math.Distribution;
 import ngsep.sequences.DNASequence;
 import ngsep.sequences.DNAShortKmer;
 import ngsep.sequences.RawRead;
@@ -26,12 +30,13 @@ public class ClusterTableManager {
 	private static int KMER_LENGTH = 31;
 	private static int PREFIX = 10;
 	private static String FILE_TYPE = ".fastq.gz";
-	private static final boolean TEST_RUN = false;
+	private static final boolean TEST_RUN = true;
 	private static final int TABLE_SIZE = 2500000;
 	private static final SequenceComparator SC = new SequenceComparator();
 	
 	private int newIndex = 0;
 	private int kmerCount = 0;
+	private long timeCount = 0;
 	private int[][] table;
 	private HashMap<DNAShortKmer, Integer> index;
 	private HashMap<DNAShortKmer, ArrayList<DNAShortKmer>> cluster;
@@ -236,11 +241,13 @@ public class ClusterTableManager {
 	}
 	
 	public void processDir(String path) {
+		timeCount = System.currentTimeMillis();
 		File[] files = (new File(path)).listFiles();
 		for(File f : files) {
 			if(f.getName().endsWith(FILE_TYPE)) process(f);
 			System.out.println("Done with " + f.getName());
 		}
+		timeCount = System.currentTimeMillis() - timeCount;
 	}
 	
 	/**
@@ -252,38 +259,40 @@ public class ClusterTableManager {
 			System.err.println("Cluster distances from the inside can only be logged on a test run."); return;
 		}
 		
-		int[] freq = new int[KMER_LENGTH];
+		Distribution distr = new Distribution(0, 5, 0.05);
 		
 		try (PrintWriter log = new PrintWriter(new FileWriter(new File(outFolder + LOG), true))) {
 			log.println("== START CLUSTER INSIDE DISTANCES ==\n\n");
-			
-			Set<DNAShortKmer> keys = cluster.keySet();
-			for(DNAShortKmer kmer : keys) {
-				int distance = 0;
-				int count = 0;
-				ArrayList<DNAShortKmer> members = cluster.get(kmer);
-				for(int i = 0; i < members.size(); i++) {
-					DNAShortKmer s1 = members.get(i);
-					for(int j = i + 1; j < members.size(); j++) {
-						DNAShortKmer s2 = members.get(j);
-						distance += SC.compare(s1, s2);
-						count++;
-					}
-				}
-				
-				try {
-					int remainder = distance/count;
-					freq[remainder]++;
-				} catch (Exception e) {
-					e.printStackTrace();
+			log.flush();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		
+		Set<DNAShortKmer> keys = cluster.keySet();
+		for(DNAShortKmer kmer : keys) {
+			double distance = 0;
+			double count = 0;
+			ArrayList<DNAShortKmer> members = cluster.get(kmer);
+			for(int i = 0; i < members.size(); i++) {
+				DNAShortKmer s1 = members.get(i);
+				for(int j = i + 1; j < members.size(); j++) {
+					DNAShortKmer s2 = members.get(j);
+					distance += SC.compare(s1, s2);
+					count++;
 				}
 			}
 			
-			log.println("Distance,Frequence");
-			for(int i = 0; i < freq.length; i++) {
-				log.println(i + "," + freq[i]);
-			}
-			
+			double average = (count == 0? 0 : distance/count);
+			distr.processDatapoint(average);
+		}
+		
+		try (PrintStream ps = new PrintStream(new FileOutputStream((outFolder + LOG), true))) {
+			distr.printDistribution(ps);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		
+		try (PrintWriter log = new PrintWriter(new FileWriter(new File(outFolder + LOG), true))) {
 			log.println("\n\n== END CLUSTER INSIDE DISTANCES ==\n\n");
 			log.flush();
 		} catch (Exception e) {
@@ -310,7 +319,7 @@ public class ClusterTableManager {
 				freq[count]++;
 			}
 			
-			log.println("Distance,Frequence");
+			log.println("Number of KMERS in Cluster,Frequence");
 			for(int i = 0; i < freq.length; i++) {
 				log.println(i + "," + freq[i]);
 			}
@@ -322,16 +331,28 @@ public class ClusterTableManager {
 		}
 	}
 	
+	public void logStats() {
+		try (PrintWriter log = new PrintWriter(new FileWriter(new File(outFolder + LOG), true))) {
+			log.println("== START STATS ==\n\n");
+			log.println("Time: " + (timeCount/1000) + "s");
+			log.println("Kmer Count: " + kmerCount);
+			log.println("Cluster Count: " + index.size());
+			log.println("\n\n== END STATS ==\n\n");
+			log.flush();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+	
 	public static void main(String[] args) {
-		long t = System.currentTimeMillis();
 		ClusterTableManager cluster = new ClusterTableManager(TABLE_SIZE);
 		cluster.processDir(args[0]);
-		System.out.println(System.currentTimeMillis() - t);
 		outFolder = args[1];
 		
-		cluster.logClusterCount();
-		//cluster.logClustersMembers();
+		cluster.logStats();
+		//cluster.logClusterCount();
 		cluster.logClusterCountDistr();
-		//cluster.logDistancesInsideClustersDistr();
+		//cluster.logClustersMembers();
+		cluster.logDistancesInsideClustersDistr();
 	}
 }
